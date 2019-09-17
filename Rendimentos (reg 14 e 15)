@@ -1,0 +1,612 @@
+---
+title: "POF"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pesquisa de Orçamentos familiares
+
+  Texto base <a href"https://agenciadenoticias.ibge.gov.br/media/com_mediaibge/arquivos/8cfb31944ce83176b89b588ce541252e.pdf"> IBGE</a>.
+  
+  Professor acha temerário usar para ver orçamentos das pessoas, pois as decisões são das famílias.
+
+  - Sete questionários
+    - POF1 - Domicílio e Pessoas (comodos, agua, luz, etc)
+    - POF 2 - Aquisição Coletiva
+    - POF 3 - Caderneta de Aquisição Coletiva
+    - POF 4 - Aquisição Individual
+    - POF 5 - Trabalho e Rendimento Individual
+    - POF 6- Avaliação das Condições de Vida
+    - POF 7- Bloco de Consumo Alimentar Pessoal 
+    
+  - Mais de 70 quadros
+
+Os seguintes arquivos
+
+ - "T_ALUGUEL_ESTIMADO_S.txt"   
+ - "T_CADERNETA_DESPESA_S.txt"  
+ - "T_CONDICOES_DE_VIDA_S.txt" 
+ - "T_CONSUMO_S.txt"            
+ - "T_DESPESA_12MESES_S.txt"    
+ - "T_DESPESA_90DIAS_S.txt"    
+ - "T_DESPESA_INDIVIDUAL_S.txt" 
+ - "T_DESPESA_VEICULO_S.txt"    
+ - "T_DOMICILIO_S.txt"         
+ - "T_INVENTARIO_S.txt"         
+ - "T_MORADOR_IMPUT_S.txt"      
+ - "T_MORADOR_S.txt"           
+ - "T_OUTRAS_DESPESAS_S.txt"    
+ - "T_OUTROS_RECI_S.txt"        
+ - "T_RENDIMENTOS_S.txt"       
+ - "T_SERVICO_DOMS_S.txt"
+  
+## Unidade de Análise
+
+  Única pesquisa que tem a chamada unidade de consumo na pesquisa, família é praticamente uma unidade de consumo, mas o conceito é distinto. 
+  
+# Leitura em R
+
+
+```{r , message = FALSE, warning = FALSE }
+# Mudança de diretório
+setwd("/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF")
+getwd()
+#instalando 
+#install.packages("srvyr")
+#install.packages("survey")
+
+# Pacotes utilizados e instalados
+library(dplyr)
+library(survey)
+library(readr)
+library(foreign)
+library(tidyr)
+library(stringr)
+library(data.table)
+library(gtools)
+library(srvyr)
+library(knitr)
+library(plotly)
+library(rmarkdown)
+library(dicionariosIBGE)
+library(Hmisc)
+
+
+
+
+```
+
+## BASE RENDIMENTO E DEDUCOES
+
+  A ideia é fazer uma análise por percentil de renda considerando as deduções de cada percentil.
+  Para isso, usaremos o Registro 14 e Registro 15. Estamos trabalhando com a ideia de que no Registro 14 temos 3 categorias de deduções: previdência, IR e outras. Os "códigos de deduções" dentro dessas 3 categorias seriam meramente a ocupação do trabalhador, sob a hipótese de que estariam aqui apenas para facilitar o trabalho e não ter de puxar em outro registro.
+  No registro 15 teríamos as outras deduções de fato, bastante discriminadas.
+  
+
+```{r , message = FALSE, warning = FALSE }
+############## BASE DE RENDIMENTOS E DEDUCOES - POF 5 / QUADRO 53 
+
+#################### 1. LEITURA DO DICIONARIO EM CSV ###################################################
+pof5.reg14.rend.ded <- read.csv2("/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/pof5.reg14.rend.ded.csv", sep=",")
+```
+
+```{r , message = FALSE, warning = FALSE }
+################### 2. LEITURA DA BASE EM TXT USANDO O DICIONARIO ######################################
+#coloca como character (estava como integer) a variável "VAR"
+pof5.reg14.rend.ded$VAR <- as.character(pof5.reg14.rend.ded$VAR)
+
+#cria posição do delimitador
+col.pos <- readr::fwf_widths(pof5.reg14.rend.ded$tamanho, col_names = pof5.reg14.rend.ded$VAR)
+
+#lê o arquivo TXT usando o delimitador criado
+pof5.reg14.rend.ded<- readr::read_fwf(file = "/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/T_RENDIMENTOS_S.txt", col_positions=col.pos )
+
+```
+
+```{r , message = FALSE, warning = FALSE }
+################# 3. MODIFICANDO ALGUMAS VARIAVEIS DE CARACTER PARA NUMERICA ###########################
+#olhar aqui quais variáveis usar neste arquivo e modificar para uso
+pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+  dplyr::mutate(fator_exp = as.numeric(fator_exp),fator_exp_2 = as.numeric(fator_exp_2),
+                valor_rend_exp= as.numeric(valor_rend_exp),
+                valor_prev_exp= as.numeric(valor_prev_exp),
+                valor_ir_exp= as.numeric(valor_ir_exp),
+                valor_outras_ded_exp = as.numeric(valor_outras_ded_exp))
+```
+
+```{r , message = FALSE, warning = FALSE }
+################# 4. RETIRANDO A EXPANSAO DA VARIAVEL DE VALOR DEFLACIONADO ANULA ######################
+
+# Criação da variável de valor deflacionado anualizado SEM fator de expansão 
+pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+    dplyr::mutate (
+                   valor_rend_m = (valor_rend_exp/fator_exp_2),
+                   valor_prev_m = (valor_prev_exp/fator_exp_2),
+                   valor_ir_m = (valor_ir_exp/fator_exp_2),
+                   valor_outras_ded_m = (valor_outras_ded_exp/fator_exp_2))
+
+
+# Fator de expansão: ajuste que "explode" a amostra para popoulacao. Nessa base, isso já esta feito, é preciso retroceder - retirar este peso para realizar as analises
+```
+
+```{r , message = FALSE, warning = FALSE }
+################ 5. CRIANDO IDENTIFICADOR A UNIDADE DE CONSUMO ##########################################
+#Identificação da Unidade de Consumo; usará para juntar as bases
+# uf = UF
+# n_seq = número seuqencial
+# dv_seq  = numero da sequencia 
+# n_dom = numero do domicilio
+# n_uc = numero unidade de consumo
+pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+    dplyr::mutate(UniConsumoID = paste0(uf, n_seq, dv_seq, n_dom,n_uc))
+
+```
+
+## Criando código de identificação do item
+  
+  O objetivo é juntar a base **REG 14** com a base **REG 15** 
+
+  Identificador dos itens de despesas (codeIBGE), chamado **cod_item**.
+  
+  O código tem 5 digitos, os dois últimos dígitos são para similares, ex nomes diferentes para arroz, os dois primeiros números indicam o quadro onde vc pode encontrar.
+  
+  Note que o IBGE fez bem errado aqui, só os três primeiros números tem significado, os dois últimos só mostram discrepâncias na maneira de dizer a mesma coisa. Mas o quadro importa e não está em cod_item, por isso você faz trim no cod_item e junta com o código do quadro.
+
+```{r , message = FALSE, warning = FALSE }
+############### 6. CRIANDO O CODIGO IBGE DE IDENTIFICACAO NA TABULACAO DO IBGE ########################
+#Identificador dos itens de despesas (codeIBGE)
+#Pegando os 3 primeiros números do código do item 
+# IMPORTANTE: pesquisadores desconsinderaram 2 ult digitos do cod_item. Vou considerar e ver se bate com dicionario
+#pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+#  dplyr::mutate(code=substr(cod_item,1,5))
+
+# Juntar o número do quadro com o codigo do item
+pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+  dplyr::mutate(codeIBGE = paste0(n_quadro,cod_item))
+```
+
+
+## Criando código para deduções
+
+A POF tem várias categorias de deduções além de IR e previdência, precisamos do número do quadro + código para identifica-las
+```{r , message = FALSE, warning = FALSE }    
+############### 7. CRIANDO CODIGO DEDUCAO  ##################################
+pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+    dplyr::mutate(CodDed_prev = (paste0(n_quadro,cod_prev)),
+                  CodDed_ir = (paste0(n_quadro,cod_ir)),
+                  CodDed_outras = (paste0(n_quadro,cod_outras_ded))
+                  )
+
+#De acordo com as varáveis de interesse é preciso verificar se necessário transformar alguma em variável numérica. 
+```
+
+```{r , message = FALSE, warning = FALSE }
+############## 8. SELECIONADO AS VARIAVEIS PARA DEPOIS JUNTAR AS BASES DE DESPESAS #####################
+# Variáveis de interesse:
+#pof5.reg14.rend.ded <- pof5.reg14.rend.ded %>%
+#  dplyr::select(UniConsumoID,codeIBGE, CodDed_prev, CodDed_ir, CodDed_outras, fator_exp, fator_exp_2,valor_rend_defl, valor_prev_defl, valor_ir_defl, valor_outras_ded_defl)
+
+#dim(pof5.reg14.rend.ded)#número de linhas e colunas da base - DEPOIS
+  
+```
+
+## BASE OUTROS RENDIMENTOS (REGISTRO 15)
+  
+  Preciso fazer o mesmo processo com a base que pega rendimentos que não trabalho:
+  - Quadro 54: aposentadorias, pensões, auxílios e outros rendimentos
+  - Quadro 55: outros rendimentos, receitas, empréstimos esporádicos
+  - Quadro 56: depósitos/aplicação de ativo financeiro
+  - Quadro 57: retirada/resgate de ativo financeiro
+
+```{r , message = FALSE, warning = FALSE }
+############################## BASE OUTROS RENDIMENTOS - POF5 - QUADRO 54 A 57 - REGISTRO 15 
+#dicionario  
+pof5.reg15.outros.rend <- read.csv2("/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/pof5.reg15.outros.rend.csv", sep=",")
+
+#base txt
+pof5.reg15.outros.rend$VAR <- as.character(pof5.reg15.outros.rend$VAR)
+col.pos1 <- readr::fwf_widths(pof5.reg15.outros.rend$tamanho, col_names = pof5.reg15.outros.rend$VAR)
+pof5.reg15.outros.rend <- readr::read_fwf(file = "/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/T_OUTROS_RECI_S.txt", col_positions=col.pos1 )
+
+#variáveis numericas
+pof5.reg15.outros.rend <- pof5.reg15.outros.rend %>%
+  dplyr::mutate(fator_exp = as.numeric(fator_exp),fator_exp_2 = as.numeric(fator_exp_2),
+                valor_rend_exp = as.numeric(valor_rend_exp),
+                valor_ded_exp = as.numeric(valor_ded_exp))
+
+# Criação da variável de valor deflacionado anualizado sem fator de expansão #comentário o valor deflacionado já expandido
+pof5.reg15.outros.rend <- pof5.reg15.outros.rend %>%
+    dplyr::mutate (
+                   valor_rend2_m = (valor_rend_exp/fator_exp_2),
+                   valor_ded2_m = (valor_ded_exp/fator_exp_2))
+
+############################
+#Identificação da Unidade de Consumo;
+pof5.reg15.outros.rend <- pof5.reg15.outros.rend %>%
+    dplyr::mutate(UniConsumoID = paste0(uf, n_seq, dv_seq, n_dom,n_uc))
+
+#Identificador dos itens de despesas (codeIBGE)
+pof5.reg15.outros.rend <- pof5.reg15.outros.rend %>%
+  dplyr::mutate(codeIBGE = paste0(n_quadro,cod_item))
+
+#Codigo de deducao
+pof5.reg15.outros.rend <- pof5.reg15.outros.rend %>%
+    dplyr::mutate(CodDed_outras2 = (paste0(n_quadro,cod_ded))
+                  )
+
+
+# Variáveis de interesse:
+#pof5.reg15.outros.rend <- pof5.reg15.outros.rend %>%
+ # dplyr::select(UniConsumoID,codeIBGE, CodDed_outras2, fator_exp, fator_exp_2,valor_rend2_defl, #valor_ded2_defl)
+
+
+dim(pof5.reg15.outros.rend)#número de linhas e colunas da base
+
+
+```
+
+
+## Unindo as bases de rendimentos e deduções
+
+  Temos duas bases de fontes de rendimento distintos com unidade de consumo, código IBGE e código de dedução.
+  
+  Terminamos com todos os itens selecionados por unidade de consumo em um único arquivo. Para fazer isso, vamos precisar criar colunas vazias e depois empilhar os data frames.
+
+    
+```{r , message = FALSE, warning = FALSE }
+
+
+########## UNINDO AS BASES DE RENDIMENTOS E DED 
+
+#Juntando dfs
+base_rendimentos <- dplyr:: bind_rows(pof5.reg14.rend.ded,
+                              pof5.reg15.outros.rend)
+
+# exclui todos os objetos abaixo
+rm(col.pos, col.pos1, pof5.reg14.rend.ded, pof5.reg15.outros.rend)
+
+```
+
+## Trabalhando a base final de rendimentos
+
+  Usando pacote **dicionariosIBGE** do CRAN para inserir categorias de rendimentos.
+  Importante: os dados de renda do trabalho (registro 14) não possuem discriminação quanto à renda; especifica-se a ocupação (empregador, empregado publico ou privado, contra propria, empregado domestico, trabalhador na producao para o proprio consumo, não remunerado em ajuda a membro do domicílio, aprendiz ou estagiário e empregado temporário na área rural). Já para os dados de outras rendas (registro 15) temos 179 categorias especificando que renda é essa.
+  Também é possível analisa rendimentos não monetários ou variaçao patrimonial, mas não está no escopo deste dataframe.
+
+```{r , message = FALSE, warning = FALSE}
+################ GRANDES GRUPOS RENDIMENTOS 
+
+# PUXANDO DICIONARIO PACOTE R
+#upload dicionario
+load('/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/dicPOF2008.2009.rda', envir =  dic <- new.env())
+# selecionando apenas dicionario de produtos dentro do environment criado
+produtos <- dic$produtos
+
+
+#transformar em caracter e inserindo 0 nas primeiras casas caso nao tenham 5 digitos
+produtos <- produtos %>%
+  dplyr::mutate(codigo = str_pad(codigo, width = 5, side = "left", pad = "0")) 
+
+# criando codeIBGE = quadro + codigo produto
+produtos <- produtos %>%
+  dplyr::mutate(codeIBGE = paste0(quadro,codigo))
+
+
+
+# eliminando colunas desnecessarias
+produtos$quadro <- NULL
+produtos$grupo <- NULL
+produtos$codigo <- NULL
+
+#Juntando descricao de produtos com base de rendimentos
+colnames(produtos) <- c("desc_rend", "codeIBGE")
+base_rendimentos <- base_rendimentos %>%
+  dplyr::left_join(produtos, by=c("codeIBGE")) 
+  
+
+# Descricoes registro 14 estao como ocupacao - substituindo todas por rendimento trabalho
+base_rendimentos <- base_rendimentos %>%
+  dplyr:: mutate(desc_rend = recode(desc_rend, 
+                            'empregador' = 'rendimento trabalho', 
+                            'conta-propria' = 'rendimento trabalho',
+                            'empregado privado' = 'rendimento trabalho',
+                            'empregado publico' = 'rendimento trabalho',
+                            'empregado domestico' = 'rendimento trabalho',
+                            'trabalhador na producao para o proprio consumo' = 'rendimento trabalho',
+                            'aprendiz ou estagiarionao-remunerado em ajuda a membro do domicilio' = 'rendimento trabalho',
+                            'empregado temporario na area rural' = 'rendimento trabalho',
+                            'aprendiz ou estagiario' = 'rendimento trabalho'))
+
+# inserindo agrupamento mais agregado
+  # puxando dicionairo
+codeIBGE <- read.csv2("/Users/felipedaroz/Google Drive/Academia/Doutorado/POF_0809/Dicionario/codes_IBGE_rendimento.csv", sep=",")
+colnames(codeIBGE) <- c('codeIBGE2','groups') 
+codeIBGE$codeIBGE2 <- as.character(codeIBGE$codeIBGE2)
+  # juntando com a base
+base_rendimentos <- base_rendimentos %>%
+  dplyr::mutate(codeIBGE2 = substr(codeIBGE, 1, 5)) %>%
+  dplyr::left_join(codeIBGE, by=c('codeIBGE2')) %>%
+  dplyr::mutate(groups = as.character(groups))
+
+
+
+sum(is.na(base_rendimentos$groups))
+# de 270.664 mil linhas, 32.651 nao possuem agrupamento...
+
+```
+
+
+# Análise - Distintas deduções por faixa de renda
+
+
+
+############################################
+
+
+### Tranformando linhas em colunas
+
+  O primeiro passo aqui faz uma agregação por unidade de consumo. A base anterior estava por item de renda, a mesma unidade de consumo pode ter consumido em momentos diferentes um mesmo item, ou dois membros da familia podem ter consumido um mesmo item. Agora teremos somente um item por unidade de consumo (proxy para família)
+
+```{r , message = FALSE, warning = FALSE }
+########################## AGREGANDO POR UC
+################# EMPILHANDO CATEGORIAS EM UM UNICO DF
+# 6 grandes grupos: renda trabalho, outras rendas, deducao ir, deducao prev, outras deducoes trabalho e outras deducoes
+# Estavam em colunas diferentes, oq dificulta montar o grafico. 
+
+
+# CUIDADO: questao com renda do trabalho renda trabalho
+    # antes de fazer, preciso jogar categorias que constam como "outras rendas" nas rendas do trabalho
+    # code IBGE - desc
+    # 55037 - 13o salario
+    # 55038 - ferias
+    # 54015 - auxilio/tiquete/cartao alimentacao
+    # 54016 - auxilio/vale/cartao transporte e combustivel
+    # 55041 - hora extra
+    # 55039 - bonificacao recebida da empresa
+    # 55045 - participacao lucros (empregado)
+base_rendimentos <- base_rendimentos %>%
+    mutate(valor_rend_m = ifelse(grepl(paste(c('55037', '55038', '54015', '54016', '55041', '55039', '55045'), collapse = "|"), codeIBGE2), valor_rend2_m, valor_rend_m)) %>%
+    mutate(valor_rend2_m = ifelse(grepl(paste(c('55037', '55038', '54015', '54016', '55041', '55039', '55045'), collapse = "|"), codeIBGE2), NA, valor_rend2_m)) %>%
+    mutate(valor_outras_ded_m = ifelse(grepl(paste(c('55037', '55038', '54015', '54016', '55041', '55039', '55045'), collapse = "|"), codeIBGE2), valor_ded2_m, valor_outras_ded_m)) %>%
+    mutate(valor_ded2_m = ifelse(grepl(paste(c('55037', '55038', '54015', '54016', '55041', '55039', '55045'), collapse = "|"), codeIBGE2), NA, valor_ded2_m))
+
+# Tratando patrimonio - preciso separar de outras rendas
+base_rendimentos <- base_rendimentos %>%
+    mutate(valor_pat = ifelse(grepl(paste(c('57001', '57002', '57003', '57004', '56001', '56002', '56003', '56004'), collapse = "|"), codeIBGE2), valor_rend2_m, NA)) %>%
+    mutate(valor_rend2_m = ifelse(grepl(paste(c('57001', '57002', '57003', '57004', '56001', '56002', '56003', '56004'), collapse = "|"), codeIBGE2), NA, valor_rend2_m)) 
+        
+
+
+# agora sim: criando 6 data frames, um para cada categoria
+rend_trab <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_rend_m)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE, codeIBGE2, fator_exp_2, groups, n_infor, desc_rend, valor_rend_m) %>%
+  dplyr:: mutate(bcat = "rend_trab") %>%
+  rename_at(vars(starts_with("valor_rend_m")), funs(str_replace(., "valor_rend_m", "valor")))
+
+rend_pat <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_pat)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE, codeIBGE2, fator_exp_2, groups, n_infor, desc_rend, valor_pat) %>%
+  dplyr:: mutate(bcat = "rend_pat") %>%
+  rename_at(vars(starts_with("valor_pat")), funs(str_replace(., "valor_pat", "valor")))
+
+
+rend_outr <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_rend2_m)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE, codeIBGE2, fator_exp_2,groups, n_infor, desc_rend, valor_rend2_m) %>%
+  dplyr:: mutate(bcat = "rend_outr") %>%
+  rename_at(vars(starts_with("valor_rend2_m")), funs(str_replace(., "valor_rend2_m", "valor")))
+
+#rend_outr$bcat <- rend_outr$desc_rend
+# 10 maiores categorias outras rendas - as outras ficaram como "rend_outr"
+# 54001, 54003, 54002, 54008, 55014, 55008, 55007, 55004, 54010, 55064
+#rend_outr <- rend_outr %>%
+#    mutate(bcat = ifelse(grepl(paste(c('54001', '54003', '54002', '54008', '55014', '55008', '55007', '55004', '54010', '55064'), collapse = "|"), codeIBGE2), bcat, "rend_outr"))
+
+ded_ir <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_ir_m)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE, codeIBGE2,  fator_exp_2,groups, n_infor, desc_rend, valor_ir_m) %>%
+  dplyr:: mutate(bcat = "ded_ir") %>%
+  rename_at(vars(starts_with("valor_ir_m")), funs(str_replace(., "valor_ir_m", "valor")))
+
+ded_prev <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_prev_m)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE, codeIBGE2, fator_exp_2,groups, n_infor, desc_rend, valor_prev_m) %>%
+  dplyr:: mutate(bcat = "ded_prev") %>%
+  rename_at(vars(starts_with("valor_prev_m")), funs(str_replace(., "valor_prev_m", "valor")))
+
+ded_outr <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_outras_ded_m)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE,codeIBGE2,  fator_exp_2,groups, n_infor, desc_rend, valor_outras_ded_m) %>%
+  dplyr:: mutate(bcat = "ded_outr") %>%
+  rename_at(vars(starts_with("valor_outras_ded_m")), funs(str_replace(., "valor_outras_ded_m", "valor")))
+
+
+ded_outr2 <- base_rendimentos %>%
+  dplyr:: filter(!is.na(valor_ded2_m)) %>%
+  dplyr:: select(UniConsumoID, codeIBGE,codeIBGE2, fator_exp_2, groups, n_infor, desc_rend, valor_ded2_m) %>%
+  dplyr:: mutate(bcat = "ded_outr2") %>%
+  rename_at(vars(starts_with("valor_ded2_m")), funs(str_replace(., "valor_ded2_m", "valor")))
+
+
+# pq fiz isso? Para facilitar ao colocar categorias separadas por colunas. Agora vou juntar os dfs
+df_rend <- rbind(rend_trab, rend_outr, ded_ir, ded_prev, ded_outr, ded_outr2 ) # propositalmente, rend_pat separada
+rm(rend_outr, rend_trab, ded_ir, ded_outr, ded_outr2, ded_prev)
+
+
+##### Agrupando por UC
+# Primeiro vou descondiderar categorias de variacao patrimonial
+rend_UC <- df_rend %>%
+  group_by(UniConsumoID) %>%
+  summarise(fator_exp_2 = min(fator_exp_2), 
+            rend_trab = sum(valor[bcat == "rend_trab"]),
+            rend_outr = sum(valor[bcat == "rend_outr"]),
+            ded_ir = sum(valor[bcat == "ded_ir"]),
+            ded_prev = sum(valor[bcat == "ded_prev"]),
+            ded_outr = sum(valor[bcat == "ded_outr"]),
+            ded_outr2 = sum(valor[bcat == "ded_outr2"])) 
+
+
+
+# Ajustando df variacao patrimonial 
+rend_pat <- rend_pat %>%
+  group_by(UniConsumoID) %>%
+  summarise(patr_pos = sum(valor[codeIBGE2 == c('57001', '57002', '57003', '57004')]),
+            patr_neg = sum(valor[codeIBGE2 == c('56001', '56002', '56003', '56004')])) 
+
+# juntando DF renda e variacao patrimonial
+# segundo tradutor da pof, considerar apenas variacao positiva do patrimonio (nao esta claro pq)
+rend_UC <- rend_UC %>%
+  left_join(rend_pat, by = "UniConsumoID") %>%
+  mutate(var_pat = ifelse((patr_pos - patr_neg) < 0, 0, (patr_pos - patr_neg))) %>%
+  select(-c(patr_pos,patr_neg))
+
+# preenchendo NAs
+rend_UC[is.na(rend_UC)] <- 0 
+
+# exclui dfs
+rm(base_rendimentos, rend_pat, df_rend, dic, produtos, codeIBGE)
+```
+
+
+
+```{r}
+########################## FAZENDO CALCULO PER CAPITA
+
+# Preciso unificar com POF1, quadro 2, registro 1
+# nesse reg, terei a quantidade de moradores
+#dicionario  
+pof1.reg1.dom <- read.csv2("/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/pof1.reg1.dom.csv", sep=",")
+
+#base txt
+pof1.reg1.dom$VAR <- as.character(pof1.reg1.dom$VAR)
+col.pos1 <- readr::fwf_widths(pof1.reg1.dom$tamanho, col_names = pof1.reg1.dom$VAR)
+pof1.reg1.dom <- readr::read_fwf(file = "/Users/felipedaroz/pCloud Drive/Shared/Dados_Cecon/Cecon/Socio-Economico/POF/INPUT/T_DOMICILIO_S.txt", col_positions=col.pos1 )
+
+#variáveis numericas
+pof1.reg1.dom <- pof1.reg1.dom %>%
+  dplyr::mutate(quant_mor = as.numeric(quant_mor))
+
+
+############################
+#Identificação da Unidade de Consumo;
+pof1.reg1.dom <- pof1.reg1.dom %>%
+    dplyr::mutate(code = paste0(uf, n_seq, dv_seq, n_dom)) %>%
+  select(code, quant_mor)
+#,n_uc
+
+
+rend_UC <- rend_UC %>%
+  dplyr:: mutate(code = substr(UniConsumoID, 1, 8)) %>%
+  left_join(pof1.reg1.dom, by = "code") %>%
+  select(-c(code)) 
+
+# removendo Reg01
+rm(col.pos1, pof1.reg1.dom)
+
+#### Calculando renda por UC per capita
+# primeiro preciso somar renda total para fazer percentis
+rend_UC <- rend_UC %>%
+  mutate(rend_tot_pc = (rend_trab + rend_outr + var_pat)/quant_mor,
+         ded_tot_pc = (ded_ir + ded_prev + ded_outr + ded_outr2)/quant_mor,
+         rend_trab_pc = rend_trab/quant_mor,
+         rend_pat_pc = var_pat/quant_mor,
+         rend_outr_pc = rend_outr/quant_mor,
+         ded_ir_pc = ded_ir/quant_mor,
+         ded_prev_pc = ded_prev/quant_mor,
+         ded_outr_pc = ded_outr/quant_mor,
+         ded_outr2_pc = ded_outr2/quant_mor)  
+
+
+# calculando percentis de renda
+df_faixa <- data.frame("perc" = seq(0,1,.01))
+df_faixa$rend_pc_faixa <- Hmisc::wtd.quantile(rend_UC$rend_tot_pc, weights = rend_UC$fator_exp_2, probs = seq(0,1,.01))
+
+
+### PRECISO CRIAR CATEGORIAS NO DF FINAL PARA CADA FAIXA DE RENDA
+rend_UC$faixa <- NA
+for (i in 1:nrow(rend_UC)) {
+    rend_UC$faixa[i] <- (as.numeric(findInterval(rend_UC[i,11],df_faixa[,2], rightmost.closed = TRUE, left.open = TRUE, all.inside = TRUE)))
+}
+
+#?findInterval
+
+# juntando por faixa
+df_final <- rend_UC %>%
+    group_by(faixa) %>%
+    summarise(rend_tot = sum(rend_tot_pc),
+              rend_trab = sum(rend_trab_pc),
+              rend_pat = sum(rend_pat_pc),
+              rend_outr = sum(rend_outr_pc),
+              ded_tot = sum(ded_tot_pc),
+              ded_ir = sum(ded_ir_pc),
+              ded_prev = sum(ded_prev_pc),
+              ded_outr = sum(ded_outr_pc),
+              ded_outr2 = sum(ded_outr2_pc))
+#df_final$faixa <- df_faixa$perc 
+
+# criando funcao e arredondando data frame
+round_df <- function(x, digits) {
+  # round all variables
+  #x : data frame
+  # number o digits
+  numeric_columns <- sapply(x, mode) == 'numeric'
+    x[numeric_columns] <-  round(x[numeric_columns], digits)
+    x
+}
+
+# diminuindo casas decimais e substituindo NA por 0
+df_final[,2:10] <- round_df(df_final[,2:10],2)
+# evitando notacao cientifica
+options(scipen = 999)
+
+```
+
+```{r}
+### CRIANDO GRÁFICO
+
+# separando renda e deducoes
+df_rend <- df_final[,c(1:5)]
+df_ded <- df_final[,c(1,6:10)]
+df_tot <- df_final[,c(1,2,6)]
+
+# antes: transformando colunas em linhas
+df_rend <- pivot_longer(df_rend, 
+                  cols = rend_trab:rend_outr)
+df_ded <- pivot_longer(df_ded, 
+                  cols = ded_ir:ded_outr2)
+
+df_tot <- pivot_longer(df_tot, 
+                  cols = c(rend_tot,ded_tot))
+
+
+g0 <- ggplot(df_rend, aes(x = faixa, y = value, fill = name)) +
+    geom_bar(position = "fill", stat = "identity") +
+    theme_bw()
+
+g1 <- ggplot(df_ded, aes(x = faixa, y = value, fill = name)) +
+    geom_bar(stat = "identity", position = "fill") +
+    theme_bw()
+
+g2 <- ggplot(df_tot, aes(x = faixa, y = value, fill = name)) +
+    geom_bar(stat = "identity", position = "fill") +
+    theme_bw()
+
+library(gridExtra)
+grid.arrange(g0, g1, g2)
+g2
+```
+
+
+
+
+
+
+
+
